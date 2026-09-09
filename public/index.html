@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>PC ↔ 모바일 멀티 테스트</title>
+<style>
+*{box-sizing:border-box} html,body{margin:0;background:#111;color:#fff;font-family:system-ui,sans-serif;overflow:hidden;touch-action:none}
+#ui{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(#151515,#090909);z-index:10}
+.panel{width:min(92vw,430px);padding:24px;border:1px solid #444;border-radius:18px;background:#1c1c1c;box-shadow:0 20px 60px #0008}
+h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:18px}input,button{width:100%;padding:13px 14px;border-radius:10px;border:1px solid #444;background:#272727;color:#fff;font-size:16px}button{cursor:pointer;background:#fff;color:#111;font-weight:800;margin-top:10px}.row{display:flex;gap:8px;margin-top:10px}.row>*{flex:1}#status{font-size:13px;color:#ffb3b3;min-height:20px;margin-top:10px}
+#gameWrap{height:100dvh;display:flex;align-items:center;justify-content:center;background:#0d0d0d}canvas{max-width:100vw;max-height:100dvh;background:#202a20;border:2px solid #555}
+#topbar{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:4;background:#0009;padding:7px 12px;border-radius:999px;font-size:13px;white-space:nowrap}
+#joy{position:fixed;left:22px;bottom:22px;width:130px;height:130px;border-radius:50%;background:#ffffff18;border:2px solid #ffffff44;display:none;z-index:5}
+#knob{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:#ffffffaa}
+#hint{position:fixed;right:14px;bottom:14px;color:#aaa;font-size:12px;z-index:4}
+</style>
+</head>
+<body>
+<div id="ui"><div class="panel">
+  <h1>멀티 크로스플레이 테스트</h1>
+  <div class="muted">PC는 WASD/방향키 · 모바일은 조이스틱</div>
+  <input id="name" placeholder="닉네임" maxlength="12" value="Player" />
+  <button id="create">방 만들기</button>
+  <div class="row"><input id="code" placeholder="방 코드 4자리" maxlength="4" /><button id="join">입장</button></div>
+  <div id="status"></div>
+</div></div>
+<div id="gameWrap"><canvas id="game" width="800" height="450"></canvas></div>
+<div id="topbar">서버 연결 중...</div>
+<div id="joy"><div id="knob"></div></div>
+<div id="hint">PC: WASD / 방향키</div>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const ui=document.getElementById('ui'),statusEl=document.getElementById('status'),topbar=document.getElementById('topbar');
+const joy=document.getElementById('joy'),knob=document.getElementById('knob');
+const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+if(isTouch){joy.style.display='block';document.getElementById('hint').textContent='모바일: 왼쪽 조이스틱';}
+
+const protocol=location.protocol==='https:'?'wss':'ws';
+const ws=new WebSocket(`${protocol}://${location.host}`);
+let myId=null,roomCode=null;
+const players=new Map();
+const keys={}; let joyX=0,joyY=0;
+
+ws.onopen=()=>topbar.textContent='서버 연결됨';
+ws.onclose=()=>topbar.textContent='서버 연결 끊김';
+ws.onerror=()=>statusEl.textContent='서버 연결 오류';
+ws.onmessage=e=>{
+  const m=JSON.parse(e.data);
+  if(m.type==='error'){statusEl.textContent=m.message;return;}
+  if(m.type==='joined'){
+    myId=m.id;roomCode=m.roomCode;players.clear();m.players.forEach(p=>players.set(p.id,p));
+    ui.style.display='none';topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;
+  }
+  if(m.type==='players'){
+    const keep=new Set();m.players.forEach(p=>{players.set(p.id,p);keep.add(p.id)});for(const id of players.keys())if(!keep.has(id))players.delete(id);
+    topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;
+  }
+  if(m.type==='player_move'){
+    const p=players.get(m.id);if(p){p.x=m.x;p.y=m.y;}
+  }
+  if(m.type==='player_left'){players.delete(m.id);topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;}
+};
+
+create.onclick=()=>ws.send(JSON.stringify({type:'create_room',name:name.value}));
+join.onclick=()=>ws.send(JSON.stringify({type:'join_room',roomCode:code.value,name:name.value}));
+code.addEventListener('input',()=>code.value=code.value.toUpperCase().replace(/[^A-Z0-9]/g,''));
+
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true; if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+let joyId=null;
+function setJoy(t){
+ const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+ let dx=t.clientX-cx,dy=t.clientY-cy;const max=40,d=Math.hypot(dx,dy)||1;if(d>max){dx=dx/d*max;dy=dy/d*max;}
+ joyX=dx/max;joyY=dy/max;knob.style.transform=`translate(${dx}px,${dy}px)`;
+}
+joy.addEventListener('pointerdown',e=>{joyId=e.pointerId;joy.setPointerCapture(e.pointerId);setJoy(e)});
+joy.addEventListener('pointermove',e=>{if(e.pointerId===joyId)setJoy(e)});
+function endJoy(e){if(e.pointerId===joyId){joyId=null;joyX=joyY=0;knob.style.transform='translate(0,0)'}}
+joy.addEventListener('pointerup',endJoy);joy.addEventListener('pointercancel',endJoy);
+
+let last=performance.now(),sendTimer=0;
+function loop(now){
+ const dt=Math.min(.033,(now-last)/1000);last=now;
+ const me=players.get(myId);
+ if(me){
+   let dx=0,dy=0;
+   if(keys.w||keys.arrowup)dy--; if(keys.s||keys.arrowdown)dy++; if(keys.a||keys.arrowleft)dx--; if(keys.d||keys.arrowright)dx++;
+   dx+=joyX;dy+=joyY;const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l;}
+   if(Math.abs(dx)+Math.abs(dy)>.02){me.x=Math.max(24,Math.min(776,me.x+dx*220*dt));me.y=Math.max(24,Math.min(426,me.y+dy*220*dt));}
+   sendTimer+=dt;if(sendTimer>0.05){sendTimer=0;if(ws.readyState===1)ws.send(JSON.stringify({type:'move',x:me.x,y:me.y}));}
+ }
+ draw();requestAnimationFrame(loop);
+}
+function draw(){
+ ctx.clearRect(0,0,800,450);
+ ctx.fillStyle='#263426';ctx.fillRect(0,0,800,450);
+ ctx.strokeStyle='#ffffff18';ctx.lineWidth=1;for(let x=0;x<800;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,450);ctx.stroke()}for(let y=0;y<450;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(800,y);ctx.stroke()}
+ let i=0;for(const p of players.values()){
+   ctx.fillStyle=p.id===myId?'#61a8ff':'#ff6868';ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle='#fff';ctx.font='14px system-ui';ctx.textAlign='center';ctx.fillText((p.name||'Player')+(p.id===myId?' (나)':''),p.x,p.y-29);i++;
+ }
+ if(players.size<2){ctx.fillStyle='#ffffffaa';ctx.font='20px system-ui';ctx.textAlign='center';ctx.fillText('친구에게 방 코드를 알려주세요',400,55);}
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
