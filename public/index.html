@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
 <title>PC ↔ 모바일 멀티 테스트</title>
 <style>
-*{box-sizing:border-box} html,body{margin:0;background:#111;color:#fff;font-family:system-ui,sans-serif;overflow:hidden;touch-action:none}
+*{box-sizing:border-box}html,body{margin:0;background:#111;color:#fff;font-family:system-ui,sans-serif;overflow:hidden;touch-action:none}
 #ui{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(#151515,#090909);z-index:10}
 .panel{width:min(92vw,430px);padding:24px;border:1px solid #444;border-radius:18px;background:#1c1c1c;box-shadow:0 20px 60px #0008}
 h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:18px}input,button{width:100%;padding:13px 14px;border-radius:10px;border:1px solid #444;background:#272727;color:#fff;font-size:16px}button{cursor:pointer;background:#fff;color:#111;font-weight:800;margin-top:10px}.row{display:flex;gap:8px;margin-top:10px}.row>*{flex:1}#status{font-size:13px;color:#ffb3b3;min-height:20px;margin-top:10px}
@@ -14,6 +14,11 @@ h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:
 #joy{position:fixed;left:22px;bottom:22px;width:130px;height:130px;border-radius:50%;background:#ffffff18;border:2px solid #ffffff44;display:none;z-index:5}
 #knob{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:#ffffffaa}
 #hint{position:fixed;right:14px;bottom:14px;color:#aaa;font-size:12px;z-index:4}
+#chat{position:fixed;right:12px;bottom:42px;width:min(330px,48vw);z-index:6;background:#000b;border:1px solid #ffffff22;border-radius:14px;padding:10px;display:none;backdrop-filter:blur(8px)}
+#chatLog{height:145px;overflow-y:auto;font-size:13px;line-height:1.35;padding:4px 2px 8px;overscroll-behavior:contain;touch-action:pan-y}
+.chatLine{margin:0 0 6px;word-break:break-word}.chatName{font-weight:800}.chatMe{color:#8ec5ff}.chatOther{color:#ff9f9f}
+#chatForm{display:flex;gap:6px}#chatInput{flex:1;min-width:0;padding:9px 10px;font-size:14px;touch-action:auto}#chatSend{width:64px;margin:0;padding:9px 8px;font-size:14px}
+@media(max-width:700px){#chat{left:12px;right:12px;bottom:168px;width:auto}#chatLog{height:105px}#hint{display:none}}
 </style>
 </head>
 <body>
@@ -29,52 +34,102 @@ h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:
 <div id="topbar">서버 연결 중...</div>
 <div id="joy"><div id="knob"></div></div>
 <div id="hint">PC: WASD / 방향키</div>
+<div id="chat">
+  <div id="chatLog"></div>
+  <form id="chatForm"><input id="chatInput" maxlength="200" autocomplete="off" placeholder="메시지 입력" /><button id="chatSend" type="submit">전송</button></form>
+</div>
 <script>
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
 const ui=document.getElementById('ui'),statusEl=document.getElementById('status'),topbar=document.getElementById('topbar');
 const joy=document.getElementById('joy'),knob=document.getElementById('knob');
+const chat=document.getElementById('chat'),chatLog=document.getElementById('chatLog'),chatForm=document.getElementById('chatForm'),chatInput=document.getElementById('chatInput');
+const nameInput=document.getElementById('name'),codeInput=document.getElementById('code');
+const createBtn=document.getElementById('create'),joinBtn=document.getElementById('join');
 const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
 if(isTouch){joy.style.display='block';document.getElementById('hint').textContent='모바일: 왼쪽 조이스틱';}
 
 const protocol=location.protocol==='https:'?'wss':'ws';
-const ws=new WebSocket(`${protocol}://${location.host}`);
-let myId=null,roomCode=null;
+let ws=null,reconnectTimer=null,reconnectAttempts=0;
+let myId=null,roomCode=sessionStorage.getItem('roomCode')||null,sessionToken=sessionStorage.getItem('sessionToken')||null;
+let playerName=sessionStorage.getItem('playerName')||'Player';
+nameInput.value=playerName;
 const players=new Map();
-const keys={}; let joyX=0,joyY=0;
+const keys={};let joyX=0,joyY=0;
 
-ws.onopen=()=>topbar.textContent='서버 연결됨';
-ws.onclose=()=>topbar.textContent='서버 연결 끊김';
-ws.onerror=()=>statusEl.textContent='서버 연결 오류';
-ws.onmessage=e=>{
-  const m=JSON.parse(e.data);
-  if(m.type==='error'){statusEl.textContent=m.message;return;}
-  if(m.type==='joined'){
-    myId=m.id;roomCode=m.roomCode;players.clear();m.players.forEach(p=>players.set(p.id,p));
-    ui.style.display='none';topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;
-  }
-  if(m.type==='players'){
-    const keep=new Set();m.players.forEach(p=>{players.set(p.id,p);keep.add(p.id)});for(const id of players.keys())if(!keep.has(id))players.delete(id);
-    topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;
-  }
-  if(m.type==='player_move'){
-    const p=players.get(m.id);if(p){p.x=m.x;p.y=m.y;}
-  }
-  if(m.type==='player_left'){players.delete(m.id);topbar.textContent=`방 코드: ${roomCode} · ${players.size}/2명`;}
+function safeSend(data){if(ws&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify(data));return true}return false}
+function roomStatus(extra=''){const count=[...players.values()].filter(p=>p.connected!==false).length;topbar.textContent=roomCode?`방 코드: ${roomCode} · ${count}/2명${extra}`:'서버 연결됨'}
+function saveSession(){if(roomCode)sessionStorage.setItem('roomCode',roomCode);if(sessionToken)sessionStorage.setItem('sessionToken',sessionToken);sessionStorage.setItem('playerName',playerName)}
+function clearSession(){sessionStorage.removeItem('roomCode');sessionStorage.removeItem('sessionToken');sessionToken=null;roomCode=null}
+
+function addChatMessage(m){
+ const line=document.createElement('div');line.className='chatLine';
+ const who=document.createElement('span');who.className='chatName '+(m.id===myId?'chatMe':'chatOther');who.textContent=(m.name||'Player')+': ';
+ const text=document.createElement('span');text.textContent=m.text||'';
+ line.append(who,text);chatLog.appendChild(line);
+ while(chatLog.children.length>50)chatLog.removeChild(chatLog.firstChild);
+ chatLog.scrollTop=chatLog.scrollHeight;
+}
+function setChatHistory(list){chatLog.innerHTML='';(list||[]).forEach(addChatMessage)}
+
+function handleMessage(m){
+ if(m.type==='error'){statusEl.textContent=m.message;return}
+ if(m.type==='resume_failed'){
+   clearSession();players.clear();ui.style.display='grid';chat.style.display='none';statusEl.textContent='기존 방 연결이 만료됐습니다. 다시 입장해주세요.';return
+ }
+ if(m.type==='joined'){
+   myId=m.id;roomCode=m.roomCode;sessionToken=m.sessionToken||sessionToken;players.clear();
+   (m.players||[]).forEach(p=>players.set(p.id,p));playerName=nameInput.value.trim()||playerName||'Player';saveSession();
+   ui.style.display='none';chat.style.display='block';statusEl.textContent='';setChatHistory(m.chatHistory||[]);roomStatus(m.resumed?' · 재연결 완료':'');
+   reconnectAttempts=0;return
+ }
+ if(m.type==='players'){
+   const keep=new Set();(m.players||[]).forEach(p=>{players.set(p.id,p);keep.add(p.id)});for(const id of players.keys())if(!keep.has(id))players.delete(id);roomStatus();return
+ }
+ if(m.type==='player_move'){const p=players.get(m.id);if(p){p.x=m.x;p.y=m.y}return}
+ if(m.type==='player_left'){players.delete(m.id);roomStatus();return}
+ if(m.type==='chat'){addChatMessage(m)}
+}
+
+function connect(){
+ if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
+ topbar.textContent=reconnectAttempts?'서버 재연결 중...':'서버 연결 중...';
+ ws=new WebSocket(`${protocol}://${location.host}`);
+ ws.onopen=()=>{
+   reconnectAttempts=0;
+   if(roomCode&&sessionToken){safeSend({type:'resume_room',roomCode,sessionToken});roomStatus(' · 복귀 중...')}
+   else topbar.textContent='서버 연결됨';
+ };
+ ws.onmessage=e=>{try{handleMessage(JSON.parse(e.data))}catch{}};
+ ws.onerror=()=>{statusEl.textContent='서버 연결 오류'};
+ ws.onclose=()=>{
+   if(roomCode){topbar.textContent='연결 끊김 · 자동 재접속 중...';reconnectAttempts++;clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connect,Math.min(1000+reconnectAttempts*500,4000))}
+   else topbar.textContent='서버 연결 끊김';
+ };
+}
+connect();
+
+createBtn.onclick=()=>{
+ playerName=nameInput.value.trim()||'Player';sessionToken=null;roomCode=null;saveSession();
+ if(!safeSend({type:'create_room',name:playerName}))statusEl.textContent='서버 연결을 기다린 뒤 다시 눌러주세요.';
 };
+joinBtn.onclick=()=>{
+ playerName=nameInput.value.trim()||'Player';const entered=codeInput.value.trim().toUpperCase();
+ if(!entered)return statusEl.textContent='방 코드를 입력해주세요.';
+ sessionToken=null;roomCode=null;saveSession();
+ if(!safeSend({type:'join_room',roomCode:entered,name:playerName}))statusEl.textContent='서버 연결을 기다린 뒤 다시 눌러주세요.';
+};
+codeInput.addEventListener('input',()=>codeInput.value=codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g,''));
+chatForm.addEventListener('submit',e=>{e.preventDefault();const text=chatInput.value.trim();if(!text)return;if(safeSend({type:'chat',text}))chatInput.value=''});
 
-create.onclick=()=>ws.send(JSON.stringify({type:'create_room',name:name.value}));
-join.onclick=()=>ws.send(JSON.stringify({type:'join_room',roomCode:code.value,name:name.value}));
-code.addEventListener('input',()=>code.value=code.value.toUpperCase().replace(/[^A-Z0-9]/g,''));
+addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(!ws||ws.readyState!==WebSocket.OPEN))connect()});
+addEventListener('pageshow',()=>{if(!ws||ws.readyState!==WebSocket.OPEN)connect()});
+addEventListener('online',connect);
 
-addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true; if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();});
+addEventListener('keydown',e=>{if(document.activeElement===chatInput||document.activeElement===nameInput||document.activeElement===codeInput)return;keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault()});
 addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
 
 let joyId=null;
-function setJoy(t){
- const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
- let dx=t.clientX-cx,dy=t.clientY-cy;const max=40,d=Math.hypot(dx,dy)||1;if(d>max){dx=dx/d*max;dy=dy/d*max;}
- joyX=dx/max;joyY=dy/max;knob.style.transform=`translate(${dx}px,${dy}px)`;
-}
+function setJoy(t){const r=joy.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=t.clientX-cx,dy=t.clientY-cy;const max=40,d=Math.hypot(dx,dy)||1;if(d>max){dx=dx/d*max;dy=dy/d*max}joyX=dx/max;joyY=dy/max;knob.style.transform=`translate(${dx}px,${dy}px)`}
 joy.addEventListener('pointerdown',e=>{joyId=e.pointerId;joy.setPointerCapture(e.pointerId);setJoy(e)});
 joy.addEventListener('pointermove',e=>{if(e.pointerId===joyId)setJoy(e)});
 function endJoy(e){if(e.pointerId===joyId){joyId=null;joyX=joyY=0;knob.style.transform='translate(0,0)'}}
@@ -82,26 +137,15 @@ joy.addEventListener('pointerup',endJoy);joy.addEventListener('pointercancel',en
 
 let last=performance.now(),sendTimer=0;
 function loop(now){
- const dt=Math.min(.033,(now-last)/1000);last=now;
- const me=players.get(myId);
- if(me){
-   let dx=0,dy=0;
-   if(keys.w||keys.arrowup)dy--; if(keys.s||keys.arrowdown)dy++; if(keys.a||keys.arrowleft)dx--; if(keys.d||keys.arrowright)dx++;
-   dx+=joyX;dy+=joyY;const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l;}
-   if(Math.abs(dx)+Math.abs(dy)>.02){me.x=Math.max(24,Math.min(776,me.x+dx*220*dt));me.y=Math.max(24,Math.min(426,me.y+dy*220*dt));}
-   sendTimer+=dt;if(sendTimer>0.05){sendTimer=0;if(ws.readyState===1)ws.send(JSON.stringify({type:'move',x:me.x,y:me.y}));}
- }
- draw();requestAnimationFrame(loop);
+ const dt=Math.min(.033,(now-last)/1000);last=now;const me=players.get(myId);
+ if(me&&me.connected!==false){let dx=0,dy=0;if(keys.w||keys.arrowup)dy--;if(keys.s||keys.arrowdown)dy++;if(keys.a||keys.arrowleft)dx--;if(keys.d||keys.arrowright)dx++;dx+=joyX;dy+=joyY;const l=Math.hypot(dx,dy);if(l>1){dx/=l;dy/=l}if(Math.abs(dx)+Math.abs(dy)>.02){me.x=Math.max(24,Math.min(776,me.x+dx*220*dt));me.y=Math.max(24,Math.min(426,me.y+dy*220*dt))}sendTimer+=dt;if(sendTimer>.05){sendTimer=0;safeSend({type:'move',x:me.x,y:me.y})}}
+ draw();requestAnimationFrame(loop)
 }
 function draw(){
- ctx.clearRect(0,0,800,450);
- ctx.fillStyle='#263426';ctx.fillRect(0,0,800,450);
- ctx.strokeStyle='#ffffff18';ctx.lineWidth=1;for(let x=0;x<800;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,450);ctx.stroke()}for(let y=0;y<450;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(800,y);ctx.stroke()}
- let i=0;for(const p of players.values()){
-   ctx.fillStyle=p.id===myId?'#61a8ff':'#ff6868';ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.fill();
-   ctx.fillStyle='#fff';ctx.font='14px system-ui';ctx.textAlign='center';ctx.fillText((p.name||'Player')+(p.id===myId?' (나)':''),p.x,p.y-29);i++;
- }
- if(players.size<2){ctx.fillStyle='#ffffffaa';ctx.font='20px system-ui';ctx.textAlign='center';ctx.fillText('친구에게 방 코드를 알려주세요',400,55);}
+ ctx.clearRect(0,0,800,450);ctx.fillStyle='#263426';ctx.fillRect(0,0,800,450);ctx.strokeStyle='#ffffff18';ctx.lineWidth=1;
+ for(let x=0;x<800;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,450);ctx.stroke()}for(let y=0;y<450;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(800,y);ctx.stroke()}
+ for(const p of players.values()){ctx.globalAlpha=p.connected===false?.35:1;ctx.fillStyle=p.id===myId?'#61a8ff':'#ff6868';ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='14px system-ui';ctx.textAlign='center';ctx.fillText((p.name||'Player')+(p.id===myId?' (나)':'')+(p.connected===false?' · 재접속 중':''),p.x,p.y-29);ctx.globalAlpha=1}
+ const active=[...players.values()].filter(p=>p.connected!==false).length;if(roomCode&&active<2){ctx.fillStyle='#ffffffaa';ctx.font='20px system-ui';ctx.textAlign='center';ctx.fillText('친구에게 방 코드를 알려주세요',400,55)}
 }
 requestAnimationFrame(loop);
 </script>
