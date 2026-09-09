@@ -51,6 +51,11 @@ wss.on('connection', (ws) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
+    if (msg.type === 'ping') {
+      send(ws, { type: 'pong', sentAt: Number(msg.sentAt) || Date.now() });
+      return;
+    }
+
     if (msg.type === 'resume_room') {
       const code = String(msg.roomCode || '').trim().toUpperCase();
       const token = String(msg.sessionToken || '');
@@ -81,17 +86,7 @@ wss.on('connection', (ws) => {
       do code = makeRoomCode(); while (rooms.has(code));
       const room = { players: [], chat: [] };
       rooms.set(code, room);
-      player = {
-        ws,
-        id: Math.random().toString(36).slice(2, 10),
-        sessionToken: makeToken(),
-        roomCode: code,
-        x: 160,
-        y: 220,
-        name: String(msg.name || 'Player').slice(0, 12),
-        disconnectedAt: null,
-        disconnectTimer: null
-      };
+      player = { ws, id: Math.random().toString(36).slice(2, 10), sessionToken: makeToken(), roomCode: code, x: 160, y: 220, name: String(msg.name || 'Player').slice(0, 12), disconnectedAt: null, disconnectTimer: null };
       room.players.push(player);
       send(ws, { type: 'joined', roomCode: code, id: player.id, sessionToken: player.sessionToken, players: serializePlayers(room), chatHistory: [] });
       return;
@@ -104,17 +99,7 @@ wss.on('connection', (ws) => {
       cleanupRoom(code);
       const activeCount = room.players.filter(p => p.ws).length;
       if (activeCount >= 2) return send(ws, { type: 'error', message: '이 테스트 방은 2명까지 입장할 수 있습니다.' });
-      player = {
-        ws,
-        id: Math.random().toString(36).slice(2, 10),
-        sessionToken: makeToken(),
-        roomCode: code,
-        x: 500,
-        y: 220,
-        name: String(msg.name || 'Player').slice(0, 12),
-        disconnectedAt: null,
-        disconnectTimer: null
-      };
+      player = { ws, id: Math.random().toString(36).slice(2, 10), sessionToken: makeToken(), roomCode: code, x: 500, y: 220, name: String(msg.name || 'Player').slice(0, 12), disconnectedAt: null, disconnectTimer: null };
       room.players.push(player);
       send(ws, { type: 'joined', roomCode: code, id: player.id, sessionToken: player.sessionToken, players: serializePlayers(room), chatHistory: room.chat.slice(-30) });
       broadcast(room, { type: 'players', players: serializePlayers(room) });
