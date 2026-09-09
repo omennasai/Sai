@@ -14,12 +14,13 @@ h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:
 #joy{position:fixed;left:22px;bottom:22px;width:130px;height:130px;border-radius:50%;background:#ffffff18;border:2px solid #ffffff44;display:none;z-index:5}
 #knob{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:#ffffffaa}
 #hint{position:fixed;right:14px;bottom:14px;color:#aaa;font-size:12px;z-index:4}
-#chat{position:fixed;right:12px;bottom:42px;width:min(330px,48vw);z-index:6;background:#000b;border:1px solid #ffffff22;border-radius:14px;padding:10px;display:none;backdrop-filter:blur(8px)}
-#chatLog{height:145px;overflow-y:auto;font-size:13px;line-height:1.35;padding:4px 2px 8px;overscroll-behavior:contain;touch-action:pan-y}
+#chatToggle{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:max(12px,env(safe-area-inset-bottom));width:72px;height:42px;margin:0;z-index:7;border-radius:12px;border:1px solid #ffffff33;background:#111e;color:#fff;font-size:14px;font-weight:800;display:none;box-shadow:0 8px 24px #0008}
+#chat{position:fixed;right:max(12px,env(safe-area-inset-right));bottom:62px;width:min(330px,48vw);z-index:6;background:#000d;border:1px solid #ffffff22;border-radius:14px;padding:10px;display:none;backdrop-filter:blur(8px);box-shadow:0 10px 30px #0008}
+#chatLog{height:145px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:13px;line-height:1.35;padding:4px 2px 8px;overscroll-behavior:contain;touch-action:pan-y}
 .chatLine{margin:0 0 6px;word-break:break-word}.chatName{font-weight:800}.chatMe{color:#8ec5ff}.chatOther{color:#ff9f9f}
 #chatForm{display:flex;gap:6px}#chatInput{flex:1;min-width:0;padding:9px 10px;font-size:14px;touch-action:auto}#chatSend{width:64px;margin:0;padding:9px 8px;font-size:14px}
-@media(max-width:700px) and (orientation:portrait){#chat{left:12px;right:12px;bottom:168px;width:auto}#chatLog{height:105px}#hint{display:none}}
-@media(orientation:landscape) and (max-height:600px){#chat{left:auto;right:max(10px,env(safe-area-inset-right));top:48px;bottom:auto;width:min(290px,36vw);padding:8px}#chatLog{height:min(112px,30dvh);font-size:12px;padding:2px 2px 5px}#chatForm{gap:5px}#chatInput{padding:7px 8px;font-size:13px}#chatSend{width:54px;padding:7px 6px;font-size:13px}#hint{display:none}}
+@media(max-width:700px) and (orientation:portrait){#chat{left:12px;right:12px;bottom:64px;width:auto}#chatLog{height:130px}#hint{display:none}}
+@media(orientation:landscape) and (max-height:600px){#chat{left:auto;right:max(10px,env(safe-area-inset-right));top:auto;bottom:60px;width:min(300px,38vw);padding:8px}#chatLog{height:min(130px,34dvh);font-size:12px;padding:2px 2px 5px}#chatForm{gap:5px}#chatInput{padding:7px 8px;font-size:13px}#chatSend{width:54px;padding:7px 6px;font-size:13px}#chatToggle{right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));width:66px;height:40px}#hint{display:none}}
 </style>
 </head>
 <body>
@@ -35,6 +36,7 @@ h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:
 <div id="topbar">서버 연결 중...</div>
 <div id="joy"><div id="knob"></div></div>
 <div id="hint">PC: WASD / 방향키</div>
+<button id="chatToggle" type="button">채팅</button>
 <div id="chat">
   <div id="chatLog"></div>
   <form id="chatForm"><input id="chatInput" maxlength="200" autocomplete="off" placeholder="메시지 입력" /><button id="chatSend" type="submit">전송</button></form>
@@ -43,7 +45,7 @@ h1{font-size:22px;margin:0 0 8px}.muted{color:#aaa;font-size:13px;margin-bottom:
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
 const ui=document.getElementById('ui'),statusEl=document.getElementById('status'),topbar=document.getElementById('topbar');
 const joy=document.getElementById('joy'),knob=document.getElementById('knob');
-const chat=document.getElementById('chat'),chatLog=document.getElementById('chatLog'),chatForm=document.getElementById('chatForm'),chatInput=document.getElementById('chatInput');
+const chat=document.getElementById('chat'),chatLog=document.getElementById('chatLog'),chatForm=document.getElementById('chatForm'),chatInput=document.getElementById('chatInput'),chatToggle=document.getElementById('chatToggle');
 const nameInput=document.getElementById('name'),codeInput=document.getElementById('code');
 const createBtn=document.getElementById('create'),joinBtn=document.getElementById('join');
 const isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
@@ -53,13 +55,16 @@ let ws=null,reconnectTimer=null,reconnectAttempts=0;
 let myId=null,roomCode=sessionStorage.getItem('roomCode')||null,sessionToken=sessionStorage.getItem('sessionToken')||null;
 let playerName=sessionStorage.getItem('playerName')||'Player';nameInput.value=playerName;
 const players=new Map();const keys={};let joyX=0,joyY=0;
+let chatOpen=false;
 function safeSend(data){if(ws&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify(data));return true}return false}
 function roomStatus(extra=''){const count=[...players.values()].filter(p=>p.connected!==false).length;topbar.textContent=roomCode?`방 코드: ${roomCode} · ${count}/2명${extra}`:'서버 연결됨'}
 function saveSession(){if(roomCode)sessionStorage.setItem('roomCode',roomCode);if(sessionToken)sessionStorage.setItem('sessionToken',sessionToken);sessionStorage.setItem('playerName',playerName)}
 function clearSession(){sessionStorage.removeItem('roomCode');sessionStorage.removeItem('sessionToken');sessionToken=null;roomCode=null}
+function setChatOpen(open){chatOpen=!!open;chat.style.display=chatOpen?'block':'none';chatToggle.textContent=chatOpen?'닫기':'채팅';if(chatOpen){requestAnimationFrame(()=>{chatLog.scrollTop=chatLog.scrollHeight})}}
+chatToggle.addEventListener('click',()=>setChatOpen(!chatOpen));
 function addChatMessage(m){const line=document.createElement('div');line.className='chatLine';const who=document.createElement('span');who.className='chatName '+(m.id===myId?'chatMe':'chatOther');who.textContent=(m.name||'Player')+': ';const text=document.createElement('span');text.textContent=m.text||'';line.append(who,text);chatLog.appendChild(line);while(chatLog.children.length>50)chatLog.removeChild(chatLog.firstChild);chatLog.scrollTop=chatLog.scrollHeight}
 function setChatHistory(list){chatLog.innerHTML='';(list||[]).forEach(addChatMessage)}
-function handleMessage(m){if(m.type==='error'){statusEl.textContent=m.message;return}if(m.type==='resume_failed'){clearSession();players.clear();ui.style.display='grid';chat.style.display='none';statusEl.textContent='기존 방 연결이 만료됐습니다. 다시 입장해주세요.';return}if(m.type==='joined'){myId=m.id;roomCode=m.roomCode;sessionToken=m.sessionToken||sessionToken;players.clear();(m.players||[]).forEach(p=>players.set(p.id,p));playerName=nameInput.value.trim()||playerName||'Player';saveSession();ui.style.display='none';chat.style.display='block';statusEl.textContent='';setChatHistory(m.chatHistory||[]);roomStatus(m.resumed?' · 재연결 완료':'');reconnectAttempts=0;return}if(m.type==='players'){const keep=new Set();(m.players||[]).forEach(p=>{players.set(p.id,p);keep.add(p.id)});for(const id of players.keys())if(!keep.has(id))players.delete(id);roomStatus();return}if(m.type==='player_move'){const p=players.get(m.id);if(p){p.x=m.x;p.y=m.y}return}if(m.type==='player_left'){players.delete(m.id);roomStatus();return}if(m.type==='chat'){addChatMessage(m)}}
+function handleMessage(m){if(m.type==='error'){statusEl.textContent=m.message;return}if(m.type==='resume_failed'){clearSession();players.clear();ui.style.display='grid';setChatOpen(false);chatToggle.style.display='none';statusEl.textContent='기존 방 연결이 만료됐습니다. 다시 입장해주세요.';return}if(m.type==='joined'){myId=m.id;roomCode=m.roomCode;sessionToken=m.sessionToken||sessionToken;players.clear();(m.players||[]).forEach(p=>players.set(p.id,p));playerName=nameInput.value.trim()||playerName||'Player';saveSession();ui.style.display='none';chatToggle.style.display='block';setChatOpen(false);statusEl.textContent='';setChatHistory(m.chatHistory||[]);roomStatus(m.resumed?' · 재연결 완료':'');reconnectAttempts=0;return}if(m.type==='players'){const keep=new Set();(m.players||[]).forEach(p=>{players.set(p.id,p);keep.add(p.id)});for(const id of players.keys())if(!keep.has(id))players.delete(id);roomStatus();return}if(m.type==='player_move'){const p=players.get(m.id);if(p){p.x=m.x;p.y=m.y}return}if(m.type==='player_left'){players.delete(m.id);roomStatus();return}if(m.type==='chat'){addChatMessage(m)}}
 function connect(){if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;topbar.textContent=reconnectAttempts?'서버 재연결 중...':'서버 연결 중...';ws=new WebSocket(`${protocol}://${location.host}`);ws.onopen=()=>{reconnectAttempts=0;if(roomCode&&sessionToken){safeSend({type:'resume_room',roomCode,sessionToken});roomStatus(' · 복귀 중...')}else topbar.textContent='서버 연결됨'};ws.onmessage=e=>{try{handleMessage(JSON.parse(e.data))}catch{}};ws.onerror=()=>{statusEl.textContent='서버 연결 오류'};ws.onclose=()=>{if(roomCode){topbar.textContent='연결 끊김 · 자동 재접속 중...';reconnectAttempts++;clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connect,Math.min(1000+reconnectAttempts*500,4000))}else topbar.textContent='서버 연결 끊김'}}
 connect();
 createBtn.onclick=()=>{playerName=nameInput.value.trim()||'Player';sessionToken=null;roomCode=null;saveSession();if(!safeSend({type:'create_room',name:playerName}))statusEl.textContent='서버 연결을 기다린 뒤 다시 눌러주세요.'};
