@@ -1,148 +1,30 @@
-const http = require('http');
-const express = require('express');
-const { WebSocketServer, WebSocket } = require('ws');
-const path = require('path');
-
-const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-
-const rooms = new Map();
-const RECONNECT_GRACE_MS = 30000;
-
-function makeRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
-
-function makeToken() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function send(ws, data) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
-}
-
-function broadcast(room, data, except = null) {
-  for (const p of room.players) {
-    if (p.ws && p.ws !== except) send(p.ws, data);
-  }
-}
-
-function serializePlayers(room) {
-  return room.players.map(p => ({ id: p.id, x: p.x, y: p.y, name: p.name, connected: !!p.ws }));
-}
-
-function cleanupRoom(roomCode) {
-  const room = rooms.get(roomCode);
-  if (!room) return;
-  room.players = room.players.filter(p => p.ws || !p.disconnectedAt || Date.now() - p.disconnectedAt < RECONNECT_GRACE_MS);
-  if (room.players.length === 0) rooms.delete(roomCode);
-}
-
-wss.on('connection', (ws) => {
-  let player = null;
-
-  ws.on('message', (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
-
-    if (msg.type === 'ping') {
-      send(ws, { type: 'pong', sentAt: Number(msg.sentAt) || Date.now() });
-      return;
-    }
-
-    if (msg.type === 'resume_room') {
-      const code = String(msg.roomCode || '').trim().toUpperCase();
-      const token = String(msg.sessionToken || '');
-      const room = rooms.get(code);
-      if (!room) return send(ws, { type: 'resume_failed' });
-      const found = room.players.find(p => p.sessionToken === token);
-      if (!found) return send(ws, { type: 'resume_failed' });
-      if (found.disconnectTimer) clearTimeout(found.disconnectTimer);
-      found.ws = ws;
-      found.disconnectedAt = null;
-      found.disconnectTimer = null;
-      player = found;
-      send(ws, {
-        type: 'joined',
-        resumed: true,
-        roomCode: code,
-        id: found.id,
-        sessionToken: found.sessionToken,
-        players: serializePlayers(room),
-        chatHistory: room.chat.slice(-30)
-      });
-      broadcast(room, { type: 'players', players: serializePlayers(room) });
-      return;
-    }
-
-    if (msg.type === 'create_room') {
-      let code;
-      do code = makeRoomCode(); while (rooms.has(code));
-      const room = { players: [], chat: [] };
-      rooms.set(code, room);
-      player = { ws, id: Math.random().toString(36).slice(2, 10), sessionToken: makeToken(), roomCode: code, x: 160, y: 220, name: String(msg.name || 'Player').slice(0, 12), disconnectedAt: null, disconnectTimer: null };
-      room.players.push(player);
-      send(ws, { type: 'joined', roomCode: code, id: player.id, sessionToken: player.sessionToken, players: serializePlayers(room), chatHistory: [] });
-      return;
-    }
-
-    if (msg.type === 'join_room') {
-      const code = String(msg.roomCode || '').trim().toUpperCase();
-      const room = rooms.get(code);
-      if (!room) return send(ws, { type: 'error', message: '방을 찾을 수 없습니다.' });
-      cleanupRoom(code);
-      const activeCount = room.players.filter(p => p.ws).length;
-      if (activeCount >= 2) return send(ws, { type: 'error', message: '이 테스트 방은 2명까지 입장할 수 있습니다.' });
-      player = { ws, id: Math.random().toString(36).slice(2, 10), sessionToken: makeToken(), roomCode: code, x: 500, y: 220, name: String(msg.name || 'Player').slice(0, 12), disconnectedAt: null, disconnectTimer: null };
-      room.players.push(player);
-      send(ws, { type: 'joined', roomCode: code, id: player.id, sessionToken: player.sessionToken, players: serializePlayers(room), chatHistory: room.chat.slice(-30) });
-      broadcast(room, { type: 'players', players: serializePlayers(room) });
-      return;
-    }
-
-    if (!player || !player.roomCode) return;
-    const room = rooms.get(player.roomCode);
-    if (!room) return;
-
-    if (msg.type === 'move') {
-      player.x = Math.max(24, Math.min(776, Number(msg.x) || player.x));
-      player.y = Math.max(24, Math.min(426, Number(msg.y) || player.y));
-      broadcast(room, { type: 'player_move', id: player.id, x: player.x, y: player.y }, ws);
-      return;
-    }
-
-    if (msg.type === 'chat') {
-      const text = String(msg.text || '').trim().slice(0, 200);
-      if (!text) return;
-      const chat = { type: 'chat', id: player.id, name: player.name, text, at: Date.now() };
-      room.chat.push(chat);
-      if (room.chat.length > 50) room.chat.splice(0, room.chat.length - 50);
-      broadcast(room, chat);
-    }
-  });
-
-  ws.on('close', () => {
-    if (!player || !player.roomCode) return;
-    const room = rooms.get(player.roomCode);
-    if (!room) return;
-    player.ws = null;
-    player.disconnectedAt = Date.now();
-    broadcast(room, { type: 'players', players: serializePlayers(room) });
-    player.disconnectTimer = setTimeout(() => {
-      const currentRoom = rooms.get(player.roomCode);
-      if (!currentRoom || player.ws) return;
-      currentRoom.players = currentRoom.players.filter(p => p !== player);
-      broadcast(currentRoom, { type: 'player_left', id: player.id });
-      if (currentRoom.players.length === 0) rooms.delete(player.roomCode);
-    }, RECONNECT_GRACE_MS);
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+const http=require('http');
+const express=require('express');
+const {WebSocketServer,WebSocket}=require('ws');
+const path=require('path');
+const app=express();app.use(express.static(path.join(__dirname,'public')));
+const server=http.createServer(app),wss=new WebSocketServer({server});
+const rooms=new Map(),RECONNECT_GRACE_MS=30000,GRID=12,TILE_MS=1500;
+function code(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)];return s}
+function token(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+function send(ws,d){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(d))}
+function broadcast(r,d,except=null){for(const p of r.players)if(p.ws&&p.ws!==except)send(p.ws,d)}
+function serial(r){return r.players.map(p=>({id:p.id,x:p.x,y:p.y,name:p.name,connected:!!p.ws,alive:p.alive,host:p.host,dirX:p.dirX||1,dirY:p.dirY||0,jumpUntil:p.jumpUntil||0}))}
+function state(r){return {phase:r.phase||'lobby',introEndsAt:r.introEndsAt||0,tiles:r.tiles||{},players:serial(r),winner:r.winner||null}}
+function cleanup(c){const r=rooms.get(c);if(!r)return;r.players=r.players.filter(p=>p.ws||!p.disconnectedAt||Date.now()-p.disconnectedAt<RECONNECT_GRACE_MS);if(!r.players.length)rooms.delete(c)}
+function resetGame(r){r.phase='intro';r.introEndsAt=Date.now()+3000;r.winner=null;r.tiles={};const spots=[[1,1],[10,10],[1,10],[10,1]];r.players.forEach((p,i)=>{const s=spots[i%spots.length];p.x=s[0];p.y=s[1];p.alive=true;p.dirX=i? -1:1;p.dirY=0;p.jumpUntil=0;p.lastJump=0;p.lastShove=0});broadcast(r,{type:'game_state',...state(r)});setTimeout(()=>{if(r.phase!=='intro')return;r.phase='playing';broadcast(r,{type:'game_start',serverNow:Date.now(),players:serial(r)})},3000)}
+function finishIfNeeded(r){if(r.phase!=='playing')return;const alive=r.players.filter(p=>p.alive);if(alive.length<=1){r.phase='ended';r.winner=alive[0]?alive[0].id:null;broadcast(r,{type:'game_over',winner:r.winner,players:serial(r)})}}
+function triggerTile(r,x,y){const k=x+','+y;if(r.tiles[k])return;r.tiles[k]=Date.now();broadcast(r,{type:'tile_trigger',x,y,at:r.tiles[k]});setTimeout(()=>{if(r.tiles[k])broadcast(r,{type:'tile_gone',x,y,at:r.tiles[k]})},TILE_MS)}
+wss.on('connection',ws=>{let player=null;ws.on('message',raw=>{let m;try{m=JSON.parse(raw.toString())}catch{return}
+if(m.type==='ping'){send(ws,{type:'pong',sentAt:Number(m.sentAt)||Date.now(),serverAt:Date.now()});return}
+if(m.type==='resume_room'){const c=String(m.roomCode||'').trim().toUpperCase(),r=rooms.get(c);if(!r)return send(ws,{type:'resume_failed'});const f=r.players.find(p=>p.sessionToken===String(m.sessionToken||''));if(!f)return send(ws,{type:'resume_failed'});if(f.disconnectTimer)clearTimeout(f.disconnectTimer);f.ws=ws;f.disconnectedAt=null;f.disconnectTimer=null;player=f;send(ws,{type:'joined',resumed:true,roomCode:c,id:f.id,sessionToken:f.sessionToken,players:serial(r),chatHistory:r.chat.slice(-30),game:state(r)});broadcast(r,{type:'players',players:serial(r)});return}
+if(m.type==='create_room'){let c;do c=code();while(rooms.has(c));const r={players:[],chat:[],phase:'lobby',tiles:{},winner:null};rooms.set(c,r);player={ws,id:Math.random().toString(36).slice(2,10),sessionToken:token(),roomCode:c,x:1,y:1,name:String(m.name||'Player').slice(0,12),host:true,alive:true,dirX:1,dirY:0};r.players.push(player);send(ws,{type:'joined',roomCode:c,id:player.id,sessionToken:player.sessionToken,players:serial(r),chatHistory:[],game:state(r)});return}
+if(m.type==='join_room'){const c=String(m.roomCode||'').trim().toUpperCase();let r=rooms.get(c);if(!r)return send(ws,{type:'error',message:'방을 찾을 수 없습니다.'});cleanup(c);r=rooms.get(c);if(!r)return send(ws,{type:'error',message:'방을 찾을 수 없습니다.'});if(r.players.length>=2)return send(ws,{type:'error',message:'이 테스트 방은 2명까지 입장할 수 있습니다.'});player={ws,id:Math.random().toString(36).slice(2,10),sessionToken:token(),roomCode:c,x:10,y:10,name:String(m.name||'Player').slice(0,12),host:false,alive:true,dirX:-1,dirY:0};r.players.push(player);send(ws,{type:'joined',roomCode:c,id:player.id,sessionToken:player.sessionToken,players:serial(r),chatHistory:r.chat.slice(-30),game:state(r)});broadcast(r,{type:'players',players:serial(r)});return}
+if(!player||!player.roomCode)return;const r=rooms.get(player.roomCode);if(!r)return;
+if(m.type==='start_game'){if(!player.host)return send(ws,{type:'error',message:'방장만 시작할 수 있습니다.'});if(r.players.filter(p=>p.ws).length<2)return send(ws,{type:'error',message:'2명이 접속해야 시작할 수 있습니다.'});resetGame(r);return}
+if(m.type==='move'&&r.phase==='playing'&&player.alive){let x=Math.max(0,Math.min(GRID-1,Number(m.x))),y=Math.max(0,Math.min(GRID-1,Number(m.y)));if(!Number.isFinite(x)||!Number.isFinite(y))return;const dx=x-player.x,dy=y-player.y;if(Math.hypot(dx,dy)>1.2)return;player.x=x;player.y=y;if(Math.abs(dx)+Math.abs(dy)>.001){const l=Math.hypot(dx,dy)||1;player.dirX=dx/l;player.dirY=dy/l}broadcast(r,{type:'player_move',id:player.id,x,y,dirX:player.dirX,dirY:player.dirY,jumpUntil:player.jumpUntil},ws);const tx=Math.floor(x+.5),ty=Math.floor(y+.5),k=tx+','+ty;if(Date.now()>(player.jumpUntil||0)){if(r.tiles[k]&&Date.now()-r.tiles[k]>=TILE_MS){player.alive=false;broadcast(r,{type:'player_out',id:player.id});finishIfNeeded(r)}else triggerTile(r,tx,ty)}return}
+if(m.type==='jump'&&r.phase==='playing'&&player.alive){const now=Date.now();if(now-(player.lastJump||0)<1100)return;player.lastJump=now;player.jumpUntil=now+600;broadcast(r,{type:'jump',id:player.id,until:player.jumpUntil});return}
+if(m.type==='shove'&&r.phase==='playing'&&player.alive){const now=Date.now();if(now-(player.lastShove||0)<2000)return;player.lastShove=now;let best=null,bd=1.35;for(const q of r.players){if(q===player||!q.alive)continue;const dx=q.x-player.x,dy=q.y-player.y,d=Math.hypot(dx,dy);if(d<bd&&(dx*(player.dirX||1)+dy*(player.dirY||0))/Math.max(d,.01)>.15){best=q;bd=d}}if(best){best.x=Math.max(-.6,Math.min(GRID-.4,best.x+(player.dirX||1)*1.5));best.y=Math.max(-.6,Math.min(GRID-.4,best.y+(player.dirY||0)*1.5));broadcast(r,{type:'shoved',id:best.id,x:best.x,y:best.y,by:player.id});if(best.x<0||best.x>GRID-1||best.y<0||best.y>GRID-1){best.alive=false;broadcast(r,{type:'player_out',id:best.id});finishIfNeeded(r)}}broadcast(r,{type:'shove_fx',id:player.id,at:now});return}
+if(m.type==='chat'){const text=String(m.text||'').trim().slice(0,200);if(!text)return;const c={type:'chat',id:player.id,name:player.name,text,at:Date.now()};r.chat.push(c);if(r.chat.length>50)r.chat.splice(0,r.chat.length-50);broadcast(r,c)}});
+ws.on('close',()=>{if(!player||!player.roomCode)return;const r=rooms.get(player.roomCode);if(!r)return;player.ws=null;player.disconnectedAt=Date.now();broadcast(r,{type:'players',players:serial(r)});player.disconnectTimer=setTimeout(()=>{const rr=rooms.get(player.roomCode);if(!rr||player.ws)return;rr.players=rr.players.filter(p=>p!==player);if(player.host&&rr.players[0])rr.players[0].host=true;broadcast(rr,{type:'players',players:serial(rr)});if(!rr.players.length)rooms.delete(player.roomCode)},RECONNECT_GRACE_MS)})});
+const PORT=process.env.PORT||3000;server.listen(PORT,()=>console.log(`Server running on http://localhost:${PORT}`));
