@@ -1,12 +1,14 @@
 (()=>{
   let selectedGame='falling_tiles';
+  window.saiSelectedGame=selectedGame;
   const games={
     falling_tiles:{name:'떨어지는 발판',desc:'12×12 발판 위에서 마지막까지 살아남으세요',ready:true},
     box_contest:{name:'박스 쟁탈전',desc:'60초 동안 박스를 자기 구역으로 옮기고 상대 박스도 훔치세요',ready:false},
-    bow_battle:{name:'활전',desc:'3층 구조와 엄폐물을 활용해 활을 차징해서 상대를 밀어내는 전투',ready:false}
+    bow_battle:{name:'활전',desc:'3층 구조와 엄폐물을 활용해 활을 차징해서 상대를 밀어내는 전투',ready:true}
   };
 
   function me(){return typeof players!=='undefined'&&players.get(myId)}
+  function setSelected(g){selectedGame=g||'falling_tiles';window.saiSelectedGame=selectedGame}
   function ensureUI(){
     const card=document.querySelector('.lobbyCard');
     if(!card||document.getElementById('miniGamePicker'))return;
@@ -58,12 +60,12 @@
   const originalMessage=message;
   message=function(m){
     if(m&&m.type==='selected_game'){
-      selectedGame=m.game||'falling_tiles';
+      setSelected(m.game||'falling_tiles');
       render();
       return;
     }
-    if(m&&m.type==='game_state'&&m.selectedGame)selectedGame=m.selectedGame;
-    if(m&&m.type==='joined'&&m.game&&m.game.selectedGame)selectedGame=m.game.selectedGame;
+    if(m&&m.type==='game_state'&&m.selectedGame)setSelected(m.selectedGame);
+    if(m&&m.type==='joined'&&m.game&&m.game.selectedGame)setSelected(m.game.selectedGame);
     originalMessage(m);
     render();
   };
