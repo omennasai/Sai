@@ -54,6 +54,7 @@
     const p=players.get(myId);if(!p||phase!=='playing')return;
     const m=ensureMotion(p),dt=Math.min(.032,(bowUpdate._last?now-bowUpdate._last:16)/1000);bowUpdate._last=now;m.lastY=p.y;m.lastX=p.x;
     let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0)+joyX;if(Math.abs(dx)>.08){dx=Math.max(-1,Math.min(1,dx));p.x+=dx*260*dt;p.dirX=dx>=0?1:-1}
+    p.x+=m.vx*dt;m.vx*=Math.pow(.06,dt);
     m.vy+=850*dt;p.y+=m.vy*dt;p.x=Math.max(18,Math.min(W-18,p.x));standingPlatform(p,m);
     if(p.y>H+55){send({type:'bow_out'});p.alive=false}
     arrowStep(dt);
