@@ -1,6 +1,6 @@
 (()=>{
   const femaleImg=new Image();
-  femaleImg.src='/female_idle_transparent.webp?v=1';
+  femaleImg.src='/file_000000009c1c8209a27abdfd11993c36.png?v=2';
   function boot(){
     if(typeof person!=='function')return;
     const basePerson=person;
@@ -11,12 +11,19 @@
           const r=Math.max(0,Math.min(600,p.jumpUntil-Date.now())),q=1-r/600;
           yy-=Math.sin(q*Math.PI)*s*.28;
         }
-        const w=s*.9,h=s*1.34;
+        const ratio=(femaleImg.naturalWidth&&femaleImg.naturalHeight)?femaleImg.naturalWidth/femaleImg.naturalHeight:.78;
+        const h=s*1.48,w=h*ratio;
         ctx.save();
         ctx.globalAlpha=p.connected===false?.35:1;
-        if(femaleImg.complete&&femaleImg.naturalWidth)ctx.drawImage(femaleImg,x-w/2,yy-h*.74,w,h);
-        else return basePerson(p,x,y,s,side);
-        if(p.name){ctx.fillStyle='#fff';ctx.font=`800 ${Math.max(11,s*.28)}px system-ui`;ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=5;ctx.fillText(p.name,x,yy-h*.8)}
+        if(femaleImg.complete&&femaleImg.naturalWidth){
+          ctx.imageSmoothingEnabled=true;
+          ctx.imageSmoothingQuality='high';
+          ctx.drawImage(femaleImg,x-w/2,yy-h*.78,w,h);
+        }else{
+          ctx.restore();
+          return basePerson(p,x,y,s,side);
+        }
+        if(p.name){ctx.fillStyle='#fff';ctx.font=`800 ${Math.max(11,s*.28)}px system-ui`;ctx.textAlign='center';ctx.shadowColor='#000';ctx.shadowBlur=5;ctx.fillText(p.name,x,yy-h*.84)}
         ctx.restore();
         return;
       }
