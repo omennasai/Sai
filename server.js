@@ -6,7 +6,7 @@ const fs=require('fs');
 const app=express();
 const publicDir=path.join(__dirname,'public');
 const indexPath=path.join(publicDir,'index.html');
-app.get('/',(req,res)=>{try{let html=fs.readFileSync(indexPath,'utf8');html=html.replace('</body>','<script src="/lobby-enhancements.js"></script><script src="/ui-action-fix.js"></script><script src="/minigame-select.js"></script><script src="/bow-game.js"></script><script src="/female-sprite-override.js?v=2"></script></body>');res.type('html').send(html)}catch(e){res.status(500).send('Failed to load game')}});
+app.get('/',(req,res)=>{try{let html=fs.readFileSync(indexPath,'utf8');html=html.replace('</body>','<script src="/lobby-enhancements.js"></script><script src="/ui-action-fix.js"></script><script src="/minigame-select.js"></script><script src="/bow-game.js"></script></body>');res.type('html').send(html)}catch(e){res.status(500).send('Failed to load game')}});
 app.use(express.static(publicDir));
 const server=http.createServer(app),wss=new WebSocketServer({server});
 const rooms=new Map(),RECONNECT_GRACE_MS=10000,GRID=12,TILE_MS=1500;
