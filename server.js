@@ -2,7 +2,17 @@ const http=require('http');
 const express=require('express');
 const {WebSocketServer,WebSocket}=require('ws');
 const path=require('path');
-const app=express();app.use(express.static(path.join(__dirname,'public')));
+const fs=require('fs');
+const app=express();
+const indexPath=path.join(__dirname,'public','index.html');
+app.get('/',(req,res)=>{
+  try{
+    let html=fs.readFileSync(indexPath,'utf8');
+    html=html.replace('<script>','<script src="/mobile-chat-fix.js"></script><script>');
+    res.type('html').send(html);
+  }catch(e){res.status(500).send('Failed to load game');}
+});
+app.use(express.static(path.join(__dirname,'public')));
 const server=http.createServer(app),wss=new WebSocketServer({server});
 const rooms=new Map(),RECONNECT_GRACE_MS=30000,GRID=12,TILE_MS=1500;
 function code(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)];return s}
@@ -28,6 +38,6 @@ if(m.type==='player_ready'&&r.phase==='briefing'){player.ready=!!m.ready;broadca
 if(m.type==='move'&&r.phase==='playing'&&player.alive){let x=Math.max(0,Math.min(GRID-1,Number(m.x))),y=Math.max(0,Math.min(GRID-1,Number(m.y)));if(!Number.isFinite(x)||!Number.isFinite(y))return;const dx=x-player.x,dy=y-player.y;if(Math.hypot(dx,dy)>1.2)return;player.x=x;player.y=y;if(Math.abs(dx)+Math.abs(dy)>.001){const l=Math.hypot(dx,dy)||1;player.dirX=dx/l;player.dirY=dy/l}broadcast(r,{type:'player_move',id:player.id,x,y,dirX:player.dirX,dirY:player.dirY,jumpUntil:player.jumpUntil},ws);const tx=Math.floor(x+.5),ty=Math.floor(y+.5),k=tx+','+ty;if(Date.now()>(player.jumpUntil||0)){if(r.tiles[k]&&Date.now()-r.tiles[k]>=TILE_MS){player.alive=false;broadcast(r,{type:'player_out',id:player.id});finishIfNeeded(r)}else triggerTile(r,tx,ty)}return}
 if(m.type==='jump'&&r.phase==='playing'&&player.alive){const now=Date.now();if(now-(player.lastJump||0)<1100)return;player.lastJump=now;player.jumpUntil=now+600;broadcast(r,{type:'jump',id:player.id,until:player.jumpUntil});return}
 if(m.type==='shove'&&r.phase==='playing'&&player.alive){const now=Date.now();if(now-(player.lastShove||0)<2000)return;player.lastShove=now;let best=null,bd=1.35;for(const q of r.players){if(q===player||!q.alive)continue;const dx=q.x-player.x,dy=q.y-player.y,d=Math.hypot(dx,dy);if(d<bd&&(dx*(player.dirX||1)+dy*(player.dirY||0))/Math.max(d,.01)>.15){best=q;bd=d}}if(best){best.x=Math.max(-.6,Math.min(GRID-.4,best.x+(player.dirX||1)*1.5));best.y=Math.max(-.6,Math.min(GRID-.4,best.y+(player.dirY||0)*1.5));broadcast(r,{type:'shoved',id:best.id,x:best.x,y:best.y,by:player.id});if(best.x<0||best.x>GRID-1||best.y<0||best.y>GRID-1){best.alive=false;broadcast(r,{type:'player_out',id:best.id});finishIfNeeded(r)}}return}
-if(m.type==='chat'){const text=String(m.text||'').trim().slice(0,200);if(!text)return;const c={type:'chat',id:player.id,name:player.name,text,at:Date.now()};r.chat.push(c);if(r.chat.length>50)r.chat.splice(0,r.chat.length-50);broadcast(r,c)}});
+if(m.type==='chat'){const text=String(m.text||'').trim().slice(0,200);if(!text)return;const c={type:'chat',id:player.id,name:player.name,text,at:Date.now()};r.chat.push(c);if(r.chat.length>50)r.chat.splice(0,r.chat.length-50);send(ws,c);broadcast(r,c,ws)}});
 ws.on('close',()=>{if(!player||!player.roomCode)return;const r=rooms.get(player.roomCode);if(!r)return;player.ws=null;player.disconnectedAt=Date.now();player.ready=false;broadcast(r,{type:'players',players:serial(r)});player.disconnectTimer=setTimeout(()=>{const rr=rooms.get(player.roomCode);if(!rr||player.ws)return;rr.players=rr.players.filter(p=>p!==player);if(player.host&&rr.players[0])rr.players[0].host=true;broadcast(rr,{type:'players',players:serial(rr)});if(!rr.players.length)rooms.delete(player.roomCode)},RECONNECT_GRACE_MS)})});
 const PORT=process.env.PORT||3000;server.listen(PORT,()=>console.log(`Server running on http://localhost:${PORT}`));
