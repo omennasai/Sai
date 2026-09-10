@@ -2,17 +2,7 @@ const http=require('http');
 const express=require('express');
 const {WebSocketServer,WebSocket}=require('ws');
 const path=require('path');
-const fs=require('fs');
-const app=express();
-const indexPath=path.join(__dirname,'public','index.html');
-app.get('/',(req,res)=>{
-  try{
-    let html=fs.readFileSync(indexPath,'utf8');
-    html=html.replace('<script>','<script src="/mobile-chat-fix.js"></script><script>');
-    res.type('html').send(html);
-  }catch(e){res.status(500).send('Failed to load game');}
-});
-app.use(express.static(path.join(__dirname,'public')));
+const app=express();app.use(express.static(path.join(__dirname,'public')));
 const server=http.createServer(app),wss=new WebSocketServer({server});
 const rooms=new Map(),RECONNECT_GRACE_MS=30000,GRID=12,TILE_MS=1500;
 function code(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)];return s}
