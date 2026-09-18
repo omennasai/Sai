@@ -1,21 +1,18 @@
 (()=>{
-  let selectedGame='falling_tiles';
+  let selectedGame='dice_duel';
   window.saiSelectedGame=selectedGame;
   const games={
-    falling_tiles:{name:'떨어지는 발판',desc:'12×12 발판 위에서 마지막까지 살아남으세요',ready:true},
-    box_contest:{name:'박스 쟁탈전',desc:'60초 동안 박스를 자기 구역으로 옮기고 상대 박스도 훔치세요',ready:false},
-    bow_battle:{name:'활전',desc:'3층 구조와 엄폐물을 활용해 활을 차징해서 상대를 밀어내는 전투',ready:true},
     dice_duel:{name:'주사위 결투',desc:'서버 주사위로 번갈아 굴리는 1대1 주사위 전투',ready:true}
   };
 
   function me(){return typeof players!=='undefined'&&players.get(myId)}
-  function setSelected(g){selectedGame=g||'falling_tiles';window.saiSelectedGame=selectedGame}
+  function setSelected(g){selectedGame=g||'dice_duel';window.saiSelectedGame=selectedGame}
   function ensureUI(){
     const card=document.querySelector('.lobbyCard');
     if(!card||document.getElementById('miniGamePicker'))return;
     const picker=document.createElement('div');
     picker.id='miniGamePicker';
-    picker.innerHTML='<div class="mgLabel">미니게임 선택</div><div class="mgChoices"><button type="button" data-game="falling_tiles">떨어지는 발판</button><button type="button" data-game="box_contest">박스 쟁탈전</button><button type="button" data-game="bow_battle">활전</button><button type="button" data-game="dice_duel">주사위 결투</button></div><div id="mgDesc"></div>';
+    picker.innerHTML='<div class="mgLabel">게임</div><div class="mgChoices"><button type="button" data-game="dice_duel">🎲 주사위 결투</button></div><div id="mgDesc"></div>';
     const first=card.querySelector('b');
     const small=card.querySelector('small');
     if(first)first.style.display='none';
@@ -46,7 +43,7 @@
       btn.classList.toggle('sel',btn.dataset.game===selectedGame);
       btn.disabled=!isHost||phase!=='lobby';
     });
-    const g=games[selectedGame]||games.falling_tiles;
+    const g=games[selectedGame]||games.dice_duel;
     const desc=document.getElementById('mgDesc');
     if(desc)desc.textContent=g.desc+(g.ready?'':' · 현재 제작 중');
     if(typeof startBtn!=='undefined'&&startBtn){
@@ -61,7 +58,7 @@
   const originalMessage=message;
   message=function(m){
     if(m&&m.type==='selected_game'){
-      setSelected(m.game||'falling_tiles');
+      setSelected(m.game||'dice_duel');
       render();
       return;
     }
