@@ -15,7 +15,7 @@ function token(){return Math.random().toString(36).slice(2)+Date.now().toString(
 function send(ws,d){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(d))}
 function broadcast(r,d,except=null){for(const p of r.players)if(p.ws&&p.ws!==except)send(p.ws,d)}
 function serial(r){return r.players.map(p=>({id:p.id,x:p.x,y:p.y,name:p.name,connected:!!p.ws,alive:p.alive,host:p.host,ready:!!p.ready,dirX:p.dirX||1,dirY:p.dirY||0,jumpUntil:p.jumpUntil||0}))}
-function state(r){return {phase:r.phase||'lobby',introEndsAt:r.introEndsAt||0,tiles:r.tiles||{},players:serial(r),winner:r.winner||null,selectedGame:r.selectedGame||'dice_duel',dice:r.dice||null}}
+function state(r){return {phase:r.phase||'lobby',introEndsAt:r.introEndsAt||0,tiles:r.tiles||{},players:serial(r),winner:r.winner||null,selectedGame:'dice_duel',dice:r.dice||null}}
 function cleanup(c){const r=rooms.get(c);if(!r)return;r.players=r.players.filter(p=>p.ws||!p.disconnectedAt||Date.now()-p.disconnectedAt<RECONNECT_GRACE_MS);if(!r.players.length)rooms.delete(c)}
 function broadcastState(r){broadcast(r,{type:'game_state',...state(r)})}
 function resetLobby(r){r.phase='lobby';r.introEndsAt=0;r.winner=null;r.tiles={};const spots=[[3,4],[8,4]];r.players.forEach((p,i)=>{const s=spots[i%spots.length];p.x=s[0];p.y=s[1];p.alive=true;p.ready=false;p.jumpUntil=0;p.lastJump=0;p.lastShove=0;p.lastBowShot=0;p.dirX=i?-1:1;p.dirY=0});broadcastState(r)}
